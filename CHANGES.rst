@@ -10,6 +10,20 @@ Unreleased
 -   Upgrade the debugger to jQuery 3.5.1. :issue:`1802`
 
 
+Version 1.0.1.1
+---------------
+
+Unreleased
+
+-   Specify a maximum number of multipart parts, default 1000, after which a
+    ``RequestEntityTooLarge`` exception is raised on parsing. This mitigates a DoS
+    attack where a larger number of form/file parts would result in disproportionate
+    resource use.
+-   Add new "edg" identifier for Edge in UserAgentPreparser.
+    :issue:`1797`
+-   Upgrade the debugger to jQuery 3.5.1. :issue:`1802`
+
+
 Version 1.0.1
 -------------
 

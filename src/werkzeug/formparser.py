@@ -168,6 +168,8 @@ class FormDataParser(object):
     :param cls: an optional dict class to use.  If this is not specified
                        or `None` the default :class:`MultiDict` is used.
     :param silent: If set to False parsing errors will not be caught.
+    :param max_form_parts: The maximum number of parts to be parsed. If this is
+        exceeded, a :exc:`~exceptions.RequestEntityTooLarge` exception is raised.
     """
 
     def __init__(
@@ -179,6 +181,8 @@ class FormDataParser(object):
         max_content_length=None,
         cls=None,
         silent=True,
+        *,
+        max_form_parts = None,
     ):
         if stream_factory is None:
             stream_factory = default_stream_factory
@@ -187,6 +191,8 @@ class FormDataParser(object):
         self.errors = errors
         self.max_form_memory_size = max_form_memory_size
         self.max_content_length = max_content_length
+        self.max_form_parts = max_form_parts
+
         if cls is None:
             cls = MultiDict
         self.cls = cls
@@ -244,6 +250,7 @@ class FormDataParser(object):
             self.errors,
             max_form_memory_size=self.max_form_memory_size,
             cls=self.cls,
+            max_form_parts=self.max_form_parts,
         )
         boundary = options.get("boundary")
         if boundary is None:
@@ -333,14 +340,22 @@ class MultiPartParser(object):
         max_form_memory_size=None,
         cls=None,
         buffer_size=64 * 1024,
+        max_form_parts = None
     ):
         self.charset = charset
         self.errors = errors
         self.max_form_memory_size = max_form_memory_size
-        self.stream_factory = (
-            default_stream_factory if stream_factory is None else stream_factory
-        )
-        self.cls = MultiDict if cls is None else cls
+        self.max_form_parts = max_form_parts
+
+        if stream_factory is None:
+            stream_factory = default_stream_factory
+
+        self.stream_factory = stream_factory
+
+        if cls is None:
+            cls = MultiDict
+
+        self.cls = cls
 
         # make sure the buffer size is divisible by four so that we can base64
         # decode chunk by chunk
