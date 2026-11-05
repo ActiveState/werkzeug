@@ -158,6 +158,10 @@ class SharedDataMiddleware(object):
                     return None, None
 
                 path = safe_join(package_path, path)
+
+                if path is None:
+                    return None, None
+
                 basename = posixpath.basename(path)
 
                 try:
@@ -191,6 +195,10 @@ class SharedDataMiddleware(object):
                     return None, None
 
                 path = safe_join(root, path)
+
+                if path is None:
+                    return None, None
+
                 basename = posixpath.basename(path)
 
                 if is_filesystem:
@@ -212,6 +220,9 @@ class SharedDataMiddleware(object):
         def loader(path):
             if path is not None:
                 path = safe_join(directory, path)
+
+                if path is None:
+                    return None, None
             else:
                 path = directory
 

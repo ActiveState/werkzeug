@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import os
 import posixpath
+import sys
 from random import SystemRandom
 from struct import Struct
 
@@ -31,6 +32,13 @@ _builtin_safe_str_cmp = getattr(hmac, "compare_digest", None)
 _sys_rng = SystemRandom()
 _os_alt_seps = list(
     sep for sep in [os.path.sep, os.path.altsep] if sep not in (None, "/")
+)
+# https://chrisdenton.github.io/omnipath/Special%20Dos%20Device%20Names.html
+# The superscript digits are U+00B9, U+00B2 and U+00B3.
+_windows_device_files = frozenset(
+    [u"AUX", u"CON", u"CONIN$", u"CONOUT$", u"NUL", u"PRN"]
+    + [u"COM" + c for c in u"123456789\u00b9\u00b2\u00b3"]
+    + [u"LPT" + c for c in u"123456789\u00b9\u00b2\u00b3"]
 )
 
 
@@ -221,26 +229,70 @@ def check_password_hash(pwhash, password):
     return safe_str_cmp(_hash_internal(method, salt, password)[0], hashval)
 
 
+def _is_windows_device_name(segment):
+    """Check if one path segment names a Windows special device such as
+    ``CON``, ``NUL`` or ``COM1``, regardless of an alternate data stream
+    marker, extension or surrounding spaces.
+    """
+    if isinstance(segment, bytes):
+        # Python 2 native strings are passed to the Windows file APIs in
+        # the filesystem (ANSI) encoding, so decode the same way.
+        segment = segment.decode(sys.getfilesystemencoding() or "utf-8", "replace")
+
+    name = segment.partition(u":")[0].partition(u".")[0].strip().upper()
+    return name in _windows_device_files
+
+
 def safe_join(directory, *pathnames):
-    """Safely join zero or more untrusted path components to a base
-    directory to avoid escaping the base directory.
+    """Safely join zero or more untrusted path components to a trusted base
+    directory to avoid escaping the base directory. Return ``None`` if the
+    path is not safe.
+
+    The untrusted path is assumed to be from/for a URL, such as for serving
+    files. Therefore, it should only use the forward slash ``/`` path
+    separator, and will be joined using that separator. On Windows, the
+    backslash ``\\`` separator is not allowed.
+
+    On Windows, special device names such as ``CON`` and ``NUL`` are not
+    allowed in any segment, regardless of extension, surrounding spaces or
+    an alternate data stream marker.
 
     :param directory: The trusted base directory.
     :param pathnames: The untrusted path components relative to the
         base directory.
     :return: A safe path, otherwise ``None``.
+
+    .. versionchanged:: 1.0.1.post1
+        Security backports from Werkzeug 2.1.0 (an empty ``directory``
+        stays relative), 3.0.6 (paths starting with ``/`` are rejected on
+        Windows, GHSA-f9vj-2wh5-fj8j), 3.1.4, 3.1.5, 3.1.6 and 3.1.9
+        (Windows special device names are rejected, GHSA-hgf8-39gv-g3f2,
+        GHSA-87hc-h4r5-73f7, GHSA-29vq-49wr-vm6x, GHSA-g6x2-hccm-hh4m).
     """
+    if not directory:
+        # Ensure we end up with ./path if directory="" is given,
+        # otherwise the first untrusted part could become trusted.
+        directory = "."
+
     parts = [directory]
 
     for filename in pathnames:
-        if filename != "":
-            filename = posixpath.normpath(filename)
+        if not filename:
+            continue
+
+        filename = posixpath.normpath(filename)
 
         if (
-            any(sep in filename for sep in _os_alt_seps)
-            or os.path.isabs(filename)
+            os.path.isabs(filename)
+            # ntpath.isabs doesn't catch UNC-like "//server/share"
+            or filename.startswith("/")
             or filename == ".."
             or filename.startswith("../")
+            or any(sep in filename for sep in _os_alt_seps)
+            or (
+                os.name == "nt"
+                and any(_is_windows_device_name(p) for p in filename.split("/"))
+            )
         ):
             return None
 

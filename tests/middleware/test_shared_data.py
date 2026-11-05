@@ -69,3 +69,27 @@ def test_shared_data_middleware(tmpdir):
             app_iter, status, headers = run_wsgi_app(app, create_environ(path))
             assert status == "404 NOT FOUND"
             assert b"".join(app_iter).strip() == b"NOT FOUND"
+
+
+def test_shared_data_unsafe_path_falls_through(tmpdir, monkeypatch):
+    """An untrusted path that safe_join rejects is passed to the wrapped
+    app (404) instead of raising inside the loader (500).
+    """
+
+    def null_application(environ, start_response):
+        start_response("404 NOT FOUND", [("Content-Type", "text/plain")])
+        yield b"NOT FOUND"
+
+    tmpdir.join("CON").write("x")
+    app = SharedDataMiddleware(
+        null_application,
+        {"/foo": str(tmpdir), "/pkg": ("werkzeug.debug", "shared")},
+    )
+
+    for path in ("/foo//etc/passwd", "/pkg//etc/passwd"):
+        app_iter, status, headers = run_wsgi_app(app, create_environ(path))
+        assert status == "404 NOT FOUND"
+
+    monkeypatch.setattr("os.name", "nt")
+    app_iter, status, headers = run_wsgi_app(app, create_environ("/foo/CON"))
+    assert status == "404 NOT FOUND"
