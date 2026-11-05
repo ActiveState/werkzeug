@@ -1,5 +1,31 @@
 .. currentmodule:: werkzeug
 
+Version 1.0.1.post1
+-------------------
+
+ActiveState security release, 2026-11-05.
+
+-   ``parse_cookie`` discards nameless cookies (``=value``) instead of
+    stripping the leading ``=``, and no longer unquotes cookie names.
+    CVE-2023-23934, GHSA-px8h-6qxv-m22q.
+-   Limit the number of multipart form parts. ``Request.max_form_parts``
+    defaults to 1000; ``FormDataParser``, ``MultiPartParser`` and
+    ``parse_form_data`` accept ``max_form_parts``. Exceeding it raises
+    ``RequestEntityTooLarge``. CVE-2023-25577, GHSA-xg9f-g7g7-2323.
+-   The debugger only allows console, code execution and PIN requests from
+    ``localhost``, ``.localhost``, ``127.0.0.1`` or the ``run_simple``
+    hostname (``DebuggedApplication.trusted_hosts``), and the debugger UI
+    uses the full URL for its requests. CVE-2024-34069, GHSA-2g68-c3qc-8985.
+-   ``safe_join`` rejects paths starting with ``/`` (UNC on Windows) and
+    Windows special device names in any segment, with any extension,
+    surrounding spaces or ADS marker; an empty base directory stays
+    relative. ``SharedDataMiddleware`` falls through instead of erroring when
+    ``safe_join`` rejects a path. CVE-2024-49766, CVE-2025-66221,
+    CVE-2026-21860, CVE-2026-27199, CVE-2026-102598.
+-   Not affected (code not present): CVE-2023-46136 (sans-io multipart
+    parser, 2.0+), CVE-2022-29361 (dev-server keep-alive, 2.1.0 only).
+
+
 Version 1.0.1
 -------------
 
