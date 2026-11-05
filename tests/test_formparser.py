@@ -124,6 +124,68 @@ class TestFormParser(object):
         req.max_form_memory_size = 400
         strict_eq(req.form["foo"], u"Hello World")
 
+        req = Request.from_values(
+            input_stream=BytesIO(data),
+            content_length=len(data),
+            content_type="multipart/form-data; boundary=foo",
+            method="POST",
+        )
+        req.max_form_parts = 1
+        pytest.raises(RequestEntityTooLarge, lambda: req.form["foo"])
+
+        req = Request.from_values(
+            input_stream=BytesIO(data),
+            content_length=len(data),
+            content_type="multipart/form-data; boundary=foo",
+            method="POST",
+        )
+        req.max_form_parts = 2
+        strict_eq(req.form["foo"], u"Hello World")
+
+    def test_max_form_parts_default(self):
+        # CVE-2023-25577: the default limit stops a flood of tiny file parts.
+        assert Request.max_form_parts == 1000
+        part = (
+            b"--foo\r\nContent-Disposition: form-data; name=f; filename=a\r\n"
+            b"\r\nx\r\n"
+        )
+        data = part * 1001 + b"--foo--\r\n"
+        req = Request.from_values(
+            input_stream=BytesIO(data),
+            content_length=len(data),
+            content_type="multipart/form-data; boundary=foo",
+            method="POST",
+        )
+        pytest.raises(RequestEntityTooLarge, lambda: req.files)
+
+        data = part * 1000 + b"--foo--\r\n"
+        req = Request.from_values(
+            input_stream=BytesIO(data),
+            content_length=len(data),
+            content_type="multipart/form-data; boundary=foo",
+            method="POST",
+        )
+        assert len(req.files.getlist("f")) == 1000
+
+    def test_parse_form_data_max_form_parts(self):
+        data = (
+            b"--foo\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n"
+            b"--foo\r\nContent-Disposition: form-data; name=b\r\n\r\n2\r\n"
+            b"--foo--\r\n"
+        )
+        environ = create_environ(
+            input_stream=BytesIO(data),
+            content_length=len(data),
+            content_type="multipart/form-data; boundary=foo",
+            method="POST",
+        )
+        pytest.raises(
+            RequestEntityTooLarge,
+            formparser.parse_form_data,
+            environ,
+            max_form_parts=1,
+        )
+
     def test_missing_multipart_boundary(self):
         data = (
             b"--foo\r\nContent-Disposition: form-field; name=foo\r\n\r\n"
