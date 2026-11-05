@@ -394,3 +394,82 @@ def test_non_hashable_exception():
     except MutableException:
         # previously crashed: `TypeError: unhashable type 'MutableException'`
         Traceback(*sys.exc_info())
+
+
+
+@pytest.mark.parametrize(
+    ("host", "trusted"),
+    [
+        ("localhost", True),
+        ("localhost:5000", True),
+        ("app.localhost", True),
+        ("127.0.0.1", True),
+        ("127.0.0.1:5000", True),
+        ("example.com", False),
+        ("localhost.example.com", False),
+        ("127.0.0.1.example.com", False),
+        ("", False),
+    ],
+)
+def test_debugger_trusted_host(host, trusted):
+    # GHSA-2g68-c3qc-8985 / CVE-2024-34069
+    def crash(environ, start_response):
+        raise ValueError("crash")
+
+    app = DebuggedApplication(crash, evalex=True, pin_security=False)
+    client = Client(app, Response)
+    kw = {"base_url": "http://localhost", "environ_overrides": {"HTTP_HOST": host}}
+    status = 200 if trusted else 400
+
+    # standalone console page
+    assert client.get("/console", **kw).status_code == status
+
+    # pin auth and pin printing
+    for cmd in ("pinauth", "printpin"):
+        qs = {"__debugger__": "yes", "cmd": cmd, "pin": "x", "s": app.secret}
+        assert client.get("/", query_string=qs, **kw).status_code == status
+
+    # the traceback page is still shown, but the interactive console is
+    # only enabled for trusted hosts
+    rv = client.get("/", **kw)
+    assert rv.status_code == 500
+    data = rv.get_data(as_text=True)
+    assert ("EVALEX = true" in data) is trusted
+    assert ("EVALEX = false" in data) is not trusted
+
+
+def test_debugger_untrusted_host_cannot_execute():
+    app = DebuggedApplication(lambda e, s: [], evalex=True, pin_security=False)
+    client = Client(app, Response)
+    # creates frame 0, the standalone console
+    assert client.get("/console", base_url="http://localhost").status_code == 200
+    qs = {"__debugger__": "yes", "cmd": "6*7", "frm": "0", "s": app.secret}
+
+    rv = client.get("/", query_string=qs, base_url="http://localhost")
+    assert rv.status_code == 200
+    assert "42" in rv.get_data(as_text=True)
+
+    rv = client.get("/", query_string=qs, base_url="http://evil.example")
+    assert rv.status_code == 400
+    assert "42" not in rv.get_data(as_text=True)
+
+
+def test_run_simple_trusts_hostname(monkeypatch):
+    from werkzeug import serving
+
+    captured = {}
+
+    class Stop(Exception):
+        pass
+
+    def fake_make_server(host, port, app, *args, **kwargs):
+        captured["app"] = app
+        raise Stop()
+
+    monkeypatch.setattr(serving, "make_server", fake_make_server)
+    monkeypatch.setenv("WERKZEUG_RUN_MAIN", "true")
+
+    with pytest.raises(Stop):
+        serving.run_simple("dev.example", 5000, lambda e, s: [], use_debugger=True)
+
+    assert captured["app"].trusted_hosts == [".localhost", "127.0.0.1", "dev.example"]

@@ -71,6 +71,7 @@ def parse_form_data(
     max_content_length=None,
     cls=None,
     silent=True,
+    max_form_parts=None,
 ):
     """Parse the form data in the environ and return it as tuple in the form
     ``(stream, form, files)``.  You should only call this method if the
@@ -110,6 +111,9 @@ def parse_form_data(
     :param cls: an optional dict class to use.  If this is not specified
                        or `None` the default :class:`MultiDict` is used.
     :param silent: If set to False parsing errors will not be caught.
+    :param max_form_parts: The maximum number of multipart parts to be
+        parsed. If this is exceeded, a
+        :exc:`~exceptions.RequestEntityTooLarge` exception is raised.
     :return: A tuple in the form ``(stream, form, files)``.
     """
     return FormDataParser(
@@ -120,6 +124,7 @@ def parse_form_data(
         max_content_length,
         cls,
         silent,
+        max_form_parts=max_form_parts,
     ).parse_from_environ(environ)
 
 
@@ -168,6 +173,9 @@ class FormDataParser(object):
     :param cls: an optional dict class to use.  If this is not specified
                        or `None` the default :class:`MultiDict` is used.
     :param silent: If set to False parsing errors will not be caught.
+    :param max_form_parts: The maximum number of multipart parts to be
+        parsed. If this is exceeded, a
+        :exc:`~exceptions.RequestEntityTooLarge` exception is raised.
     """
 
     def __init__(
@@ -179,6 +187,7 @@ class FormDataParser(object):
         max_content_length=None,
         cls=None,
         silent=True,
+        max_form_parts=None,
     ):
         if stream_factory is None:
             stream_factory = default_stream_factory
@@ -191,6 +200,7 @@ class FormDataParser(object):
             cls = MultiDict
         self.cls = cls
         self.silent = silent
+        self.max_form_parts = max_form_parts
 
     def get_parse_func(self, mimetype, options):
         return self.parse_functions.get(mimetype)
@@ -244,6 +254,7 @@ class FormDataParser(object):
             self.errors,
             max_form_memory_size=self.max_form_memory_size,
             cls=self.cls,
+            max_form_parts=self.max_form_parts,
         )
         boundary = options.get("boundary")
         if boundary is None:
@@ -333,10 +344,12 @@ class MultiPartParser(object):
         max_form_memory_size=None,
         cls=None,
         buffer_size=64 * 1024,
+        max_form_parts=None,
     ):
         self.charset = charset
         self.errors = errors
         self.max_form_memory_size = max_form_memory_size
+        self.max_form_parts = max_form_parts
         self.stream_factory = (
             default_stream_factory if stream_factory is None else stream_factory
         )
@@ -455,8 +468,21 @@ class MultiPartParser(object):
         elif terminator != next_part:
             self.fail("Expected boundary at start of multipart data")
 
+        parts_decoded = 0
+
         while terminator != last_part:
             headers = parse_multipart_headers(iterator)
+
+            # Limit the number of parts so that a body made of many tiny
+            # parts (each one possibly a file) can't exhaust CPU, memory
+            # or file handles. CVE-2023-25577
+            parts_decoded += 1
+
+            if (
+                self.max_form_parts is not None
+                and parts_decoded > self.max_form_parts
+            ):
+                raise exceptions.RequestEntityTooLarge()
 
             disposition = headers.get("content-disposition")
             if disposition is None:

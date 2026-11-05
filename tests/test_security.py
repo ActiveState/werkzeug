@@ -9,10 +9,10 @@
     :license: BSD-3-Clause
 """
 import os
-import posixpath
 
 import pytest
 
+from werkzeug._compat import PY2
 from werkzeug.security import check_password_hash
 from werkzeug.security import generate_password_hash
 from werkzeug.security import pbkdf2_hex
@@ -76,11 +76,28 @@ def test_password_hashing():
     assert check_password_hash(legacy, "default")
 
 
-def test_safe_join():
-    assert safe_join("foo", "bar/baz") == posixpath.join("foo", "bar/baz")
-    assert safe_join("foo", "../bar/baz") is None
-    if os.name == "nt":
-        assert safe_join("foo", "foo\\bar") is None
+@pytest.mark.parametrize(
+    ("path", "expect"),
+    [
+        ("b/c", "a/b/c"),
+        ("../b/c", None),
+        ("b\\c", None if os.name == "nt" else "a/b\\c"),
+        ("//b/c", None),
+        ("/b/c", None),
+        ("", "a"),
+    ],
+)
+def test_safe_join(path, expect):
+    assert safe_join("a", path) == expect
+
+
+def test_safe_join_unc_on_windows_path_module(monkeypatch):
+    """GHSA-f9vj-2wh5-fj8j: Python 2.7's ntpath.isabs("//b/c") is False."""
+    import ntpath
+
+    monkeypatch.setattr(os, "path", ntpath)
+    assert safe_join("a", "//b/c") is None
+    assert safe_join("a", "b/c") == "a/b/c"
 
 
 def test_safe_join_os_sep():
@@ -90,6 +107,64 @@ def test_safe_join_os_sep():
     sec._os_alt_seps = "*"
     assert safe_join("foo", "bar/baz*") is None
     sec._os_alt_steps = prev_value
+
+
+def test_safe_join_empty_trusted():
+    assert safe_join("", "c:test.txt") == "./c:test.txt"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # GHSA-hgf8-39gv-g3f2
+        "CON",
+        "con",
+        "NUL.txt",
+        "COM1",
+        "LPT9.log",
+        # GHSA-87hc-h4r5-73f7
+        "CON.txt.html",
+        "CON  ",
+        "CON . txt",
+        "CONIN$",
+        "conout$.x",
+        u"COM\u00b9",
+        u"LPT\u00b3.txt",
+        # GHSA-29vq-49wr-vm6x
+        "b/CON",
+        "b/aux.txt",
+        # GHSA-g6x2-hccm-hh4m
+        "CON:",
+        "NUL::$DATA",
+        "b/PRN:x.txt",
+    ],
+)
+def test_safe_join_windows_special(monkeypatch, name):
+    """Windows special device name is not allowed on Windows."""
+    monkeypatch.setattr("os.name", "nt")
+    assert safe_join("a", name) is None
+    assert safe_join("a", "b", name) is None
+
+
+@pytest.mark.skipif(not PY2, reason="native str paths are bytes on Python 2 only")
+def test_safe_join_windows_special_bytes(monkeypatch):
+    monkeypatch.setattr("os.name", "nt")
+    assert safe_join("a", b"CON") is None
+    assert safe_join("a", b"b/nul.txt") is None
+    assert safe_join("a", b"b/c.txt") == "a/b/c.txt"
+
+
+@pytest.mark.parametrize(
+    "name", ["CONSOLE", "COM0", "COM10", "LPT0", "b/icon.png", "file:ads", "c/CONx"]
+)
+def test_safe_join_windows_not_special(monkeypatch, name):
+    monkeypatch.setattr("os.name", "nt")
+    assert safe_join("a", name) == "a/" + name
+
+
+def test_safe_join_not_windows_special(monkeypatch):
+    monkeypatch.setattr("os.name", "posix")
+    assert safe_join("a", "CON") == "a/CON"
 
 
 def test_pbkdf2():

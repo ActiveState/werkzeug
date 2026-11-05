@@ -40,7 +40,7 @@ _quote_re = re.compile(br"[\\].")
 _legal_cookie_chars_re = br"[\w\d!#%&\'~_`><@,:/\$\*\+\-\.\^\|\)\(\?\}\{\=]"
 _cookie_re = re.compile(
     br"""
-    (?P<key>[^=;]+)
+    (?P<key>[^=;]*)
     (?:\s*=\s*
         (?P<val>
             "(?:[^\\"]|\\.)*" |
@@ -316,17 +316,24 @@ def _cookie_parse_impl(b):
     """Lowlevel cookie parsing facility that operates on bytes."""
     i = 0
     n = len(b)
+    b += b";"
 
     while i < n:
-        match = _cookie_re.search(b + b";", i)
+        match = _cookie_re.match(b, i)
+
         if not match:
             break
 
-        key = match.group("key").strip()
-        value = match.group("val") or b""
         i = match.end(0)
+        key = match.group("key").strip()
 
-        yield _cookie_unquote(key), _cookie_unquote(value)
+        if not key:
+            continue
+
+        value = match.group("val") or b""
+        # Cookie names are not unquoted (RFC 6265). Unquoting allowed a
+        # quoted name to masquerade as a __Secure-/__Host- prefixed one.
+        yield key, _cookie_unquote(value)
 
 
 def _encode_idna(domain):

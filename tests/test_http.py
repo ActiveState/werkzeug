@@ -445,7 +445,8 @@ class TestHTTPUtility(object):
     def test_parse_cookie(self):
         cookies = http.parse_cookie(
             "dismiss-top=6; CP=null*; PHPSESSID=0a539d42abc001cdc762809248d4beed;"
-            ' a=42; b="\\";"; ; fo234{=bar;blub=Blah;'
+            ' a=42; b="\\";"; ; fo234{=bar;blub=Blah; "__Secure-c"=d;'
+            "==__Host-eq=bad;__Host-eq=good;"
         )
         assert cookies.to_dict() == {
             "CP": u"null*",
@@ -455,7 +456,22 @@ class TestHTTPUtility(object):
             "b": u'";',
             "fo234{": u"bar",
             "blub": u"Blah",
+            '"__Secure-c"': u"d",
+            "__Host-eq": u"good",
         }
+
+    def test_parse_cookie_nameless_and_quoted_names(self):
+        # CVE-2023-23934: a nameless cookie whose value looks like
+        # "__Host-x=..." must not shadow the real prefixed cookie, and a
+        # quoted name must not be unquoted into a prefixed name.
+        for header in (
+            "==__Host-eq=bad; __Host-eq=good",
+            "=__Host-eq=bad; __Host-eq=good",
+            '"__Host-eq"=bad; __Host-eq=good',
+        ):
+            cookies = http.parse_cookie(header)
+            assert cookies.getlist("__Host-eq") == [u"good"]
+            assert cookies["__Host-eq"] == u"good"
 
     def test_dump_cookie(self):
         rv = http.dump_cookie(

@@ -98,6 +98,13 @@ class BaseRequest(object):
     #: .. versionadded:: 0.5
     max_form_memory_size = None
 
+    #: The maximum number of multipart parts to parse, passed to
+    #: :attr:`form_data_parser_class`. Parsing form data with more than this
+    #: many parts will raise :exc:`~.RequestEntityTooLarge`.
+    #:
+    #: .. versionadded:: 1.0.1.post1 (backport of 2.2.3, CVE-2023-25577)
+    max_form_parts = 1000
+
     #: the class to use for `args` and `form`.  The default is an
     #: :class:`~werkzeug.datastructures.ImmutableMultiDict` which supports
     #: multiple values per key.  alternatively it makes sense to use an
@@ -293,6 +300,7 @@ class BaseRequest(object):
             self.max_form_memory_size,
             self.max_content_length,
             self.parameter_storage_class,
+            max_form_parts=self.max_form_parts,
         )
 
     def _load_form_data(self):
