@@ -24,10 +24,12 @@ from os.path import join
 
 from .._compat import text_type
 from .._internal import _log
+from ..exceptions import SecurityError
 from ..http import parse_cookie
 from ..security import gen_salt
 from ..wrappers import BaseRequest as Request
 from ..wrappers import BaseResponse as Response
+from ..wsgi import host_is_trusted
 from .console import Console
 from .tbtools import get_current_traceback
 from .tbtools import render_console_html
@@ -269,6 +271,13 @@ class DebuggedApplication(object):
         self._failed_pin_auth = 0
 
         self.pin_logging = pin_logging
+        #: List of domains to allow requests to the debugger from. A
+        #: leading dot allows all subdomains. Only ``localhost``,
+        #: ``.localhost`` subdomains and ``127.0.0.1`` are allowed by
+        #: default. Backport of the Werkzeug 3.0.3 fix for
+        #: GHSA-2g68-c3qc-8985 (CVE-2024-34069).
+        self.trusted_hosts = [".localhost", "127.0.0.1"]
+
         if pin_security:
             # Print out the pin for the debugger on standard out.
             if os.environ.get("WERKZEUG_RUN_MAIN") == "true" and pin_logging:
@@ -341,17 +350,25 @@ class DebuggedApplication(object):
             else:
                 is_trusted = bool(self.check_pin_trust(environ))
                 yield traceback.render_full(
-                    evalex=self.evalex, evalex_trusted=is_trusted, secret=self.secret
+                    evalex=self.evalex and self.check_host_trust(environ),
+                    evalex_trusted=is_trusted,
+                    secret=self.secret,
                 ).encode("utf-8", "replace")
 
             traceback.log(environ["wsgi.errors"])
 
     def execute_command(self, request, command, frame):
         """Execute a command in a console."""
+        if not self.check_host_trust(request.environ):
+            return SecurityError()
+
         return Response(frame.console.eval(command), mimetype="text/html")
 
     def display_console(self, request):
         """Display a standalone shell."""
+        if not self.check_host_trust(request.environ):
+            return SecurityError()
+
         if 0 not in self.frames:
             if self.console_init_func is None:
                 ns = {}
@@ -400,12 +417,21 @@ class DebuggedApplication(object):
             return None
         return (time.time() - PIN_TIME) < int(ts)
 
+    def check_host_trust(self, environ):
+        """Check that the request's ``Host`` header is one of
+        :attr:`trusted_hosts`.
+        """
+        return host_is_trusted(environ.get("HTTP_HOST"), self.trusted_hosts)
+
     def _fail_pin_auth(self):
         time.sleep(5.0 if self._failed_pin_auth > 5 else 0.5)
         self._failed_pin_auth += 1
 
     def pin_auth(self, request):
         """Authenticates with the pin."""
+        if not self.check_host_trust(request.environ):
+            return SecurityError()
+
         exhausted = False
         auth = False
         trust = self.check_pin_trust(request.environ)
@@ -451,8 +477,11 @@ class DebuggedApplication(object):
             rv.delete_cookie(self.pin_cookie_name)
         return rv
 
-    def log_pin_request(self):
+    def log_pin_request(self, request):
         """Log the pin if needed."""
+        if not self.check_host_trust(request.environ):
+            return SecurityError()
+
         if self.pin_logging and self.pin is not None:
             _log(
                 "info", " * To enable the debugger you need to enter the security pin:"
@@ -480,7 +509,7 @@ class DebuggedApplication(object):
             elif cmd == "pinauth" and secret == self.secret:
                 response = self.pin_auth(request)
             elif cmd == "printpin" and secret == self.secret:
-                response = self.log_pin_request()
+                response = self.log_pin_request(request)
             elif (
                 self.evalex
                 and cmd is not None

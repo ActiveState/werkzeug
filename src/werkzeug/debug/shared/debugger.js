@@ -73,7 +73,7 @@ $(function() {
       label.val('submitting...');
       $.ajax({
         dataType:     'json',
-        url:          document.location.pathname,
+        url:          document.location.href,
         data:         {__debugger__: 'yes', tb: TRACEBACK, cmd: 'paste',
                        s: SECRET},
         success:      function(data) {
@@ -104,7 +104,7 @@ function initPinBox() {
     btn.disabled = true;
     $.ajax({
       dataType: 'json',
-      url: document.location.pathname,
+      url: document.location.href,
       data: {__debugger__: 'yes', cmd: 'pinauth', pin: pin,
              s: SECRET},
       success: function(data) {
@@ -132,7 +132,7 @@ function initPinBox() {
 function promptForPin() {
   if (!EVALEX_TRUSTED) {
     $.ajax({
-      url: document.location.pathname,
+      url: document.location.href,
       data: {__debugger__: 'yes', cmd: 'printpin', s: SECRET}
     });
     $('.pin-prompt').fadeIn(function() {
